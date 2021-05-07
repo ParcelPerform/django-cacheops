@@ -1,9 +1,9 @@
+from importlib import import_module
 from funcy import memoize, merge
 
 from django.conf import settings as base_settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.signals import setting_changed
-from django.utils.module_loading import import_string
 
 
 ALL_OPS = {'get', 'fetch', 'count', 'aggregate', 'exists'}
@@ -23,6 +23,7 @@ class Defaults:
     #       and one should not filter by their equality anyway.
     CACHEOPS_SKIP_FIELDS = "FileField", "TextField", "BinaryField", "JSONField"
     CACHEOPS_LONG_DISJUNCTION = 8
+    CACHEOPS_SERIALIZER = 'pickle'
 
     # pp_django_cacheops exclusive
     CACHEOPS_CLUSTER_ENABLED = False
@@ -36,9 +37,8 @@ class Defaults:
 class Settings(object):
     def __getattr__(self, name):
         res = getattr(base_settings, name, getattr(Defaults, name))
-
-        if name == 'CACHEOPS_PREFIX' and res:
-            res = res if callable(res) else import_string(res)
+        if name in ['CACHEOPS_PREFIX', 'CACHEOPS_SERIALIZER']:
+            res = import_string(res) if isinstance(res, str) else res
 
         # pp_django_cacheops exclusive
         if name == 'CACHEOPS_PREFIX' and self.CACHEOPS_CLUSTER_ENABLED and res:
@@ -51,7 +51,7 @@ class Settings(object):
 
         # Convert old list of classes to list of strings
         if name == 'CACHEOPS_SKIP_FIELDS':
-            [f if isinstance(f, str) else f.get_internal_type(res) for f in res]
+            res = [f if isinstance(f, str) else f.get_internal_type(res) for f in res]
 
         # Save to dict to speed up next access, __getattr__ won't be called
         self.__dict__[name] = res
@@ -59,6 +59,14 @@ class Settings(object):
 
 settings = Settings()
 setting_changed.connect(lambda setting, **kw: settings.__dict__.pop(setting, None), weak=False)
+
+
+def import_string(path):
+    if "." in path:
+        module, attr = path.rsplit(".", 1)
+        return getattr(import_module(module), attr)
+    else:
+        return import_module(path)
 
 
 @memoize

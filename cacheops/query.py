@@ -1,13 +1,12 @@
 import sys
 import json
 import threading
-import pickle
 from random import random
 
 from funcy import select_keys, cached_property, once, once_per, monkey, wraps, walk, chain
 from funcy import lmap, map, lcat, join_with
 
-from django.utils.encoding import smart_str, force_text
+from django.utils.encoding import force_str
 from django.core.exceptions import ImproperlyConfigured, EmptyResultSet
 from django.db import DEFAULT_DB_ALIAS
 from django.db import models
@@ -23,7 +22,7 @@ except ImportError:
     MAX_GET_RESULTS = None
 
 from .conf import model_profile, settings, ALL_OPS
-from .utils import monkey_mix, stamp_fields, func_cache_key, cached_view_fab, family_has_profile
+from .utils import monkey_mix, stamp_fields, get_cache_key, cached_view_fab, family_has_profile
 from .utils import md5
 from .sharding import get_prefix
 from .redis import redis_client, handle_connection_failure, load_script, load_script_cluster
@@ -68,15 +67,14 @@ def cache_thing(prefix, cache_key, data, cond_dnfs, timeout, dbs=(), precall_key
     load_script('cache_thing', settings.CACHEOPS_LRU)(
         keys=[prefix, cache_key, precall_key],
         args=[
-            pickle.dumps(data, -1),
+            settings.CACHEOPS_SERIALIZER.dumps(data),
             json.dumps(cond_dnfs, default=str),
             timeout
         ]
     )
 
 
-def cached_as(*samples, timeout=None, extra=None, lock=None, keep_fresh=False,
-                        key_func=func_cache_key):
+def cached_as(*samples, timeout=None, extra=None, lock=None, keep_fresh=False):
     """
     Caches results of a function and invalidates them same way as given queryset(s).
     NOTE: Ignores queryset cached ops settings, always caches.
@@ -108,8 +106,7 @@ def cached_as(*samples, timeout=None, extra=None, lock=None, keep_fresh=False,
     querysets = lmap(_get_queryset, samples)
     dbs = list({qs.db for qs in querysets})
     cond_dnfs = join_with(lcat, map(dnfs, querysets))
-    key_extra = [qs._cache_key(prefix=False) for qs in querysets]
-    key_extra.append(extra)
+    qs_keys = [qs._cache_key(prefix=False) for qs in querysets]
     if timeout is None:
         timeout = min(qs._cacheprofile['timeout'] for qs in querysets)
     if lock is None:
@@ -122,12 +119,13 @@ def cached_as(*samples, timeout=None, extra=None, lock=None, keep_fresh=False,
                 return func(*args, **kwargs)
 
             prefix = get_prefix(func=func, _cond_dnfs=cond_dnfs, dbs=dbs)
-            cache_key = prefix + 'as:' + key_func(func, args, kwargs, key_extra)
+            extra_val = extra(*args, **kwargs) if callable(extra) else extra
+            cache_key = prefix + 'as:' + get_cache_key(func, args, kwargs, qs_keys, extra_val)
 
             with redis_client.getting(cache_key, lock=lock) as cache_data:
                 cache_read.send(sender=None, func=func, hit=cache_data is not None)
                 if cache_data is not None:
-                    return pickle.loads(cache_data)
+                    return settings.CACHEOPS_SERIALIZER.loads(cache_data)
                 else:
                     if keep_fresh:
                         # We call this "asp" for "as precall" because this key is
@@ -135,7 +133,7 @@ def cached_as(*samples, timeout=None, extra=None, lock=None, keep_fresh=False,
                         # the key to prevent falsely thinking the key was not
                         # invalidated when in fact it was invalidated and the
                         # function was called again in another process.
-                        suffix = key_func(func, args, kwargs, key_extra + [random()])
+                        suffix = get_cache_key(func, args, kwargs, qs_keys, extra_val, random())
                         precall_key = prefix + 'asp:' + suffix
                         # Cache a precall_key to watch for invalidation during
                         # the function call. Its value does not matter. If and
@@ -192,8 +190,8 @@ class QuerySetMixin(object):
             try:
                 sql_str = sql % params
             except UnicodeDecodeError:
-                sql_str = sql % walk(force_text, params)
-            md.update(smart_str(sql_str))
+                sql_str = sql % walk(force_str, params)
+            md.update(force_str(sql_str))
         except EmptyResultSet:
             pass
         # If query results differ depending on database
@@ -294,7 +292,7 @@ class QuerySetMixin(object):
         with redis_client.getting(cache_key, lock=lock) as cache_data:
             cache_read.send(sender=self.model, func=None, hit=cache_data is not None)
             if cache_data is not None:
-                self._result_cache = pickle.loads(cache_data)
+                self._result_cache = settings.CACHEOPS_SERIALIZER.loads(cache_data)
             else:
                 self._result_cache = list(self._iterable_class(self))
                 self._cache_results(cache_key, self._result_cache)
