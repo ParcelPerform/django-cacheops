@@ -6,3 +6,11 @@ build
 sqlite*.db
 .tox
 .cache
+.vscode
+.idea
+.DS_Store
+env_files/
+release.sh
+build.sh
+Dockerfile
+.metals
