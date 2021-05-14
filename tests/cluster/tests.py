@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import re
+import platform
 import unittest
 import mock
 
@@ -637,6 +638,24 @@ class IssueTests(BaseTestCase):
         categories = Category.objects.cache().annotate(newest_post=Subquery(newest_post[:1]))
         self.assertEqual(categories[0].newest_post, post.pk)
 
+    @unittest.skipIf(platform.python_implementation() == "PyPy", "dill doesn't do that in PyPy")
+    def test_385(self):
+        Client.objects.create(name='Client Name')
+
+        with self.assertRaises(AttributeError) as e:
+            Client.objects.filter(name='Client Name').cache().first()
+            self.assertEqual(
+                str(e.exception),
+                "Can't pickle local object 'Client.__init__.<locals>.curry.<locals>._curried'"
+            )
+
+        invalidator.invalidate_model(Client)
+
+        with override_settings(CACHEOPS_SERIALIZER='dill'):
+            with self.assertNumQueries(1):
+                Client.objects.filter(name='Client Name').cache().first()
+                Client.objects.filter(name='Client Name').cache().first()
+
     def test_387(self):
         post = Post.objects.defer("visible").last()
         post.delete()
@@ -915,12 +934,7 @@ class MultitableInheritanceTests(BaseTestCase):
 
 class SimpleCacheTests(BaseTestCase):
     def test_cached(self):
-        calls = [0]
-
-        @cached(timeout=100)
-        def get_calls(_):
-            calls[0] += 1
-            return calls[0]
+        get_calls = make_inc(cached(timeout=100))
 
         self.assertEqual(get_calls(1), 1)
         self.assertEqual(get_calls(1), 1)
@@ -935,12 +949,7 @@ class SimpleCacheTests(BaseTestCase):
         self.assertEqual(get_calls(2), 42)
 
     def test_cached_view(self):
-        calls = [0]
-
-        @cached_view(timeout=100)
-        def get_calls(request):
-            calls[0] += 1
-            return calls[0]
+        get_calls = make_inc(cached_view(timeout=100))
 
         factory = RequestFactory()
         r1 = factory.get('/hi')
