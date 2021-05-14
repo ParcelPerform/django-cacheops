@@ -644,9 +644,10 @@ class IssueTests(BaseTestCase):
 
         with self.assertRaises(AttributeError) as e:
             Client.objects.filter(name='Client Name').cache().first()
-        self.assertEqual(
-            str(e.exception),
-            "Can't pickle local object 'Client.__init__.<locals>.curry.<locals>._curried'")
+            self.assertEqual(
+                str(e.exception),
+                "Can't pickle local object 'Client.__init__.<locals>.curry.<locals>._curried'"
+            )
 
         invalidator.invalidate_model(Client)
 

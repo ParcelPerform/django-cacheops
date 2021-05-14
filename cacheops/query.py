@@ -57,7 +57,7 @@ def cache_thing(prefix, cache_key, data, cond_dnfs, timeout, dbs=(), precall_key
             keys=[prefix, cache_key],
             args=[
                 precall_key,
-                pickle.dumps(data, -1),
+                settings.CACHEOPS_SERIALIZER.dumps(data),
                 cond_dnfs,
                 timeout
             ],

@@ -6,3 +6,4 @@ Django>=1.8
 before_after==1.0.0
 Jinja2>=2.10
 psycopg2-binary==2.8.2
+dill
