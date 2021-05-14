@@ -28,10 +28,10 @@ setup(
     python_requires='>=3.5',
     install_requires=[
         'django>=2.1',
-        'redis==2.10.6',
+        'redis>=3.0.0',
         'funcy>=1.8,<2.0',
         'six>=1.4.0',
-        'redis-py-cluster==1.3.6',
+        'redis-py-cluster>=2.0.0',
     ],
     classifiers=[
         'Development Status :: 5 - Production/Stable',
